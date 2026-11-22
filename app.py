@@ -274,7 +274,8 @@ elif page == "需求預測":
     item = col1.selectbox("選擇耗材", items["耗材"])
     days = col2.slider("預測未來幾天", min_value=7, max_value=90, value=30, step=7)
 
-    history = usage[usage["耗材"] == item][["日期", "用量"]].reset_index(drop=True)
+    today = pd.Timestamp.today().normalize()
+    history = usage[(usage["耗材"] == item) & (usage["日期"] < today)][["日期", "用量"]].reset_index(drop=True)  # 今天還沒過完，不拿來訓練
     with st.spinner("AI 模型訓練中，請稍候..."):
         forecast, mape = run_forecast(history, days)
 
@@ -330,7 +331,8 @@ elif page == "補貨提醒":
     rows = []
     progress = st.progress(0, text="AI 正在預測各項耗材...")
     for i, it in items.iterrows():
-        history = usage[usage["耗材"] == it["耗材"]][["日期", "用量"]].reset_index(drop=True)
+        today = pd.Timestamp.today().normalize()
+        history = usage[(usage["耗材"] == it["耗材"]) & (usage["日期"] < today)][["日期", "用量"]].reset_index(drop=True)  # 今天還沒過完，不拿來訓練
         forecast, _ = run_forecast(history, 90)
         future = forecast[forecast["ds"] > history["日期"].max()]
         daily = future["yhat"].clip(lower=0)
