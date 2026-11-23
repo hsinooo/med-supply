@@ -231,8 +231,9 @@ if page == "庫存總覽":
     st.subheader("用量趨勢")
     choice = st.selectbox("選擇耗材", overview["耗材"])
     days = st.slider("顯示最近幾天", min_value=30, max_value=365, value=90, step=30)
-    data = usage[usage["耗材"] == choice].tail(days).set_index("日期")["用量"]
+    data = usage[(usage["耗材"] == choice) & (usage["日期"] < taiwan_today())].tail(days).set_index("日期")["用量"]
     st.line_chart(data)
+    st.caption("圖表只顯示到昨天；今天還沒過完，今天的領用量會在明天重設前列在操作紀錄中。")
 
 # ---------- 領用與進貨頁 ----------
 elif page == "領用與進貨":
