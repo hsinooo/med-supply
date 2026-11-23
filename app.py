@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 from prophet import Prophet
 
-from generate_data import generate
+from generate_data import MARKER, TZ, generate, taiwan_today
 
 st.set_page_config(page_title="醫療耗材管理系統", page_icon="🏥", layout="wide")
 
@@ -18,12 +18,12 @@ LOG_FILE = "data/transactions.csv"
 
 # ---------- 讀取資料 ----------
 def ensure_data():
-    """沒有資料、或資料沒有更新到昨天時，自動重新產生模擬資料（部署到雲端時特別需要）"""
-    yesterday = pd.Timestamp.today().normalize() - pd.Timedelta(days=1)
-    if os.path.exists(USAGE_FILE) and os.path.exists(ITEMS_FILE):
-        last = pd.to_datetime(pd.read_csv(USAGE_FILE)["日期"]).max()
-        if last >= yesterday:
-            return
+    """每天（台灣時間）第一次開啟時重新產生模擬資料，讓資料永遠接到昨天，展示環境也每天重設"""
+    today = str(taiwan_today().date())
+    if os.path.exists(ITEMS_FILE) and os.path.exists(USAGE_FILE) and os.path.exists(MARKER):
+        with open(MARKER) as f:
+            if f.read().strip() == today:
+                return
     generate()
 
 
@@ -46,7 +46,7 @@ def load_log():
 def write_log(item, kind, qty, new_stock):
     log = load_log()
     user = st.session_state.get("user", {})
-    log.loc[len(log)] = [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user.get("name", "未知"),
+    log.loc[len(log)] = [datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S"), user.get("name", "未知"),
                          user.get("role", "未知"), item, kind, qty, new_stock]
     log.to_csv(LOG_FILE, index=False, encoding="utf-8-sig")
 
@@ -68,7 +68,7 @@ def update_stock(item, kind, qty):
 
         # 領用量也要寫進每日用量紀錄，之後預測才會用到
         usage = pd.read_csv(USAGE_FILE)
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(TZ).strftime("%Y-%m-%d")
         mask = (usage["日期"] == today) & (usage["耗材"] == item)
         if mask.any():
             usage.loc[mask, "用量"] += qty
@@ -90,8 +90,8 @@ def update_stock(item, kind, qty):
 
 # ---------- 計算庫存狀態 ----------
 def build_overview(items, usage):
-    last_date = usage["日期"].max()
-    recent = usage[usage["日期"] > last_date - pd.Timedelta(days=30)]   # 最近 30 天
+    today = taiwan_today()
+    recent = usage[(usage["日期"] < today) & (usage["日期"] >= today - pd.Timedelta(days=30))]   # 最近 30 天（不含還沒過完的今天）
     avg = recent.groupby("耗材")["用量"].mean().round(1)
 
     df = items.copy()
@@ -274,7 +274,7 @@ elif page == "需求預測":
     item = col1.selectbox("選擇耗材", items["耗材"])
     days = col2.slider("預測未來幾天", min_value=7, max_value=90, value=30, step=7)
 
-    today = pd.Timestamp.today().normalize()
+    today = taiwan_today()
     history = usage[(usage["耗材"] == item) & (usage["日期"] < today)][["日期", "用量"]].reset_index(drop=True)  # 今天還沒過完，不拿來訓練
     with st.spinner("AI 模型訓練中，請稍候..."):
         forecast, mape = run_forecast(history, days)
@@ -331,7 +331,7 @@ elif page == "補貨提醒":
     rows = []
     progress = st.progress(0, text="AI 正在預測各項耗材...")
     for i, it in items.iterrows():
-        today = pd.Timestamp.today().normalize()
+        today = taiwan_today()
         history = usage[(usage["耗材"] == it["耗材"]) & (usage["日期"] < today)][["日期", "用量"]].reset_index(drop=True)  # 今天還沒過完，不拿來訓練
         forecast, _ = run_forecast(history, 90)
         future = forecast[forecast["ds"] > history["日期"].max()]
@@ -342,7 +342,7 @@ elif page == "補貨提醒":
         n = int((cum <= stock).sum())                                # 從資料最後一天起，庫存撐得過幾天
         if n < len(future):
             run_out_date = future["ds"].iloc[n]
-            days_left = max(0, (run_out_date - pd.Timestamp.today().normalize()).days)  # 從今天算起還剩幾天
+            days_left = max(0, (run_out_date - taiwan_today()).days)  # 從今天算起還剩幾天
             run_out = run_out_date.strftime("%Y-%m-%d")
         else:
             days_left, run_out = 90, "90 天以上"
@@ -379,7 +379,7 @@ elif page == "補貨提醒":
     order = result[result["建議補貨量"] > 0][["耗材", "單位", "建議補貨量", "建議"]].copy()
     order["建議"] = order["建議"].str[2:]                              # 去掉表情符號，Excel 才不會顯示成怪符號
     st.download_button("📥 下載採購清單（CSV）", order.to_csv(index=False).encode("utf-8-sig"),
-                       file_name=f"採購清單_{datetime.now():%Y%m%d}.csv", mime="text/csv")
+                       file_name=f"採購清單_{datetime.now(TZ):%Y%m%d}.csv", mime="text/csv")
 
 # ---------- 操作紀錄頁（僅管理員） ----------
 elif page == "操作紀錄":
@@ -399,7 +399,7 @@ elif page == "操作紀錄":
             view = view[view["耗材"].isin(what)]
         st.dataframe(view.iloc[::-1], width="stretch", hide_index=True)
         st.download_button("📥 下載操作紀錄（CSV）", view.to_csv(index=False).encode("utf-8-sig"),
-                           file_name=f"操作紀錄_{datetime.now():%Y%m%d}.csv", mime="text/csv")
+                           file_name=f"操作紀錄_{datetime.now(TZ):%Y%m%d}.csv", mime="text/csv")
 
     # 重設資料（展示前或資料被弄亂時使用）
     st.divider()

@@ -1,6 +1,16 @@
 import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import numpy as np
 import pandas as pd
+
+TZ = ZoneInfo("Asia/Taipei")   # 雲端主機用的是國際標準時間（UTC），一律換成台灣時間
+MARKER = "data/generated_on.txt"
+
+
+def taiwan_today():
+    return pd.Timestamp(datetime.now(TZ).date())
 
 
 def generate():
@@ -19,7 +29,7 @@ def generate():
     ])
 
     # 2. 產生每天的用量紀錄
-    end = pd.Timestamp.today().normalize() - pd.Timedelta(days=1)                # 資料一律產生到「昨天」
+    end = taiwan_today() - pd.Timedelta(days=1)                                   # 資料一律產生到「昨天」（台灣時間）
     dates = pd.date_range("2024-01-01", end, freq="D")
     rows = []
     for _, it in items.iterrows():
@@ -38,6 +48,8 @@ def generate():
     usage.to_csv("data/usage.csv", index=False, encoding="utf-8-sig")
     if os.path.exists("data/transactions.csv"):
         os.remove("data/transactions.csv")                                               # 資料重來，操作紀錄也清空
+    with open(MARKER, "w") as f:
+        f.write(str(taiwan_today().date()))                                              # 記下今天產生過資料
     return len(items), len(usage), dates[0].date(), dates[-1].date()
 
 
